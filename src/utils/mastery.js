@@ -42,53 +42,48 @@ export const MASTERY_META = {
 };
 
 /**
- * Determines 5-tier mastery level strictly from actual test history & FSRS state.
- * - Never grants Dikuasai on 1x answer, card flip alone, or Recognition-only passes.
- * - Drops level if performance declines (Again / low stability).
+ * Determines 5-tier mastery level from actual test history & Sulit/Mudah stage.
+ * - Stage 0 / Sulit -> Baru dikenali
+ * - Mudah 1 (15m)   -> Baru dikenali
+ * - Mudah 2 (30m)   -> Mulai hafal
+ * - Mudah 3-4 (1-2j)-> Cukup hafal
+ * - Mudah 5+ (4j)   -> Dikuasai (requires accuracy >= 70% & non-recognition pass)
  */
 export function evaluateMastery(cardState, cardLogs = []) {
   if (!cardState || cardState.reps === 0) {
     return MASTERY_LEVELS.UNSEEN;
   }
 
-  const { reps, stability, scheduledDays, lastRating, lapses, totalReviews, correctCount } = cardState;
+  const {
+    reps,
+    easyStreak = 0,
+    lastRating,
+    totalReviews,
+    correctCount,
+  } = cardState;
   const accuracy = totalReviews > 0 ? correctCount / totalReviews : 0;
 
-  // If user just forgot (Again), cannot be Cukup hafal or Dikuasai
-  if (lastRating === RATINGS.AGAIN) {
-    return reps >= 2 && stability >= 2
-      ? MASTERY_LEVELS.LEARNING
-      : MASTERY_LEVELS.RECOGNIZED;
+  // If last answer was Sulit, drop back to Baru dikenali
+  if (lastRating === RATINGS.AGAIN || lastRating === RATINGS.HARD || easyStreak === 0) {
+    return MASTERY_LEVELS.RECOGNIZED;
   }
 
-  // Check if card has non-recognition (active recall / reverse / context) passes
   const hasRecallPass =
     cardLogs.length === 0
       ? cardState.lastMode !== "recognition"
       : cardLogs.some((l) => l.mode !== "recognition" && l.rating >= RATINGS.GOOD);
 
-  // Tier 5: Dikuasai (long-term retention proven across spaced intervals)
-  if (
-    reps >= 4 &&
-    stability >= 21 &&
-    scheduledDays >= 7 &&
-    lastRating >= RATINGS.GOOD &&
-    accuracy >= 0.7 &&
-    hasRecallPass
-  ) {
+  if (easyStreak >= 5 && reps >= 5 && accuracy >= 0.7 && hasRecallPass) {
     return MASTERY_LEVELS.MASTERED;
   }
 
-  // Tier 4: Cukup hafal (multiple sessions & multi-day stability)
-  if (reps >= 3 && stability >= 7 && scheduledDays >= 2 && lastRating >= RATINGS.HARD && lapses <= 2) {
+  if (easyStreak >= 3) {
     return MASTERY_LEVELS.FAMILIAR;
   }
 
-  // Tier 3: Mulai hafal (able to answer correctly with >1 day stability)
-  if (reps >= 2 && stability >= 2 && lastRating >= RATINGS.HARD) {
+  if (easyStreak >= 2) {
     return MASTERY_LEVELS.LEARNING;
   }
 
-  // Tier 2: Baru dikenali (introduced, not yet proven)
   return MASTERY_LEVELS.RECOGNIZED;
 }

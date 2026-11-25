@@ -180,10 +180,10 @@ export function computeDashboardAnalytics(cards, cardStates, reviewLogs, periodD
   const accuracyPct =
     totalPeriodReviews > 0 ? Math.round((correctPeriodReviews / totalPeriodReviews) * 100) : null;
 
-  // Retention: reviews after a time gap (>= 1h = short-term < 7d, >= 7d = long-term)
-  const retentionShortLogs = periodLogs.filter((l) => l.elapsedDays >= 0.04 && l.elapsedDays < 7);
+  // Retention: reviews after a time gap (>= ~4 min = short-term < 7d, >= 7d = long-term)
+  const retentionShortLogs = periodLogs.filter((l) => l.elapsedDays >= 0.003 && l.elapsedDays < 7);
   const retentionLongLogs = periodLogs.filter((l) => l.elapsedDays >= 7);
-  const allRetentionLogs = periodLogs.filter((l) => l.elapsedDays >= 0.04);
+  const allRetentionLogs = periodLogs.filter((l) => l.elapsedDays >= 0.003);
 
   const calcRetention = (arr) =>
     arr.length > 0
@@ -206,7 +206,7 @@ export function computeDashboardAnalytics(cards, cardStates, reviewLogs, periodD
     const key = toLocalDateKey(dTs);
     const dayLogs = reviewLogs.filter((l) => toLocalDateKey(l.timestamp) === key);
     const dayCorrect = dayLogs.filter((l) => l.rating >= RATINGS.HARD).length;
-    const dayRet = dayLogs.filter((l) => l.elapsedDays >= 0.04);
+    const dayRet = dayLogs.filter((l) => l.elapsedDays >= 0.003);
     dailySeries.push({
       dateKey: key,
       label: key.slice(5), // MM-DD

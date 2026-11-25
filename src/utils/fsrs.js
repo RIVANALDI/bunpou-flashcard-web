@@ -1,10 +1,12 @@
-// FSRS-4.5 / FSRS-5 inspired Spaced Repetition Scheduler (pure JS, deterministic)
+// 2-Button Adaptive Spaced Repetition Scheduler (Sulit / Mudah)
+// Sulit: 5 menit (resets stage to 0)
+// Mudah: 15 menit -> 30 menit -> 1 jam -> 2 jam -> 4 jam (stage 1..5+)
 
 export const RATINGS = {
-  AGAIN: 1,
-  HARD: 2,
-  GOOD: 3,
-  EASY: 4,
+  AGAIN: 1, // Sulit
+  HARD: 2,  // Kept for backward compatibility with existing logs
+  GOOD: 3,  // Mudah
+  EASY: 4,  // Kept for backward compatibility with existing logs
 };
 
 export const CARD_STATES = {
@@ -14,21 +16,13 @@ export const CARD_STATES = {
   RELEARNING: "relearning",
 };
 
-const DEFAULT_PARAMS = {
-  requestRetention: 0.9,
-  maximumInterval: 365,
-  // FSRS standard default weights (w0..w16)
-  w: [
-    0.4, 0.6, 2.4, 5.8,
-    4.93, 0.94, 0.86, 0.01,
-    1.49, 0.14, 0.94, 2.18,
-    0.05, 0.34, 1.26, 0.29,
-    2.61,
-  ],
-};
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MIN_MS = 60 * 1000;
+
+export const MUDAH_INTERVAL_MINUTES = [15, 30, 60, 120, 240];
+export const SULIT_INTERVAL_MINUTES = 5;
+
+const STAGE_STABILITY_DAYS = [0.2, 0.8, 2.5, 5.0, 10.0, 22.0];
 
 export function createEmptyCardState(cardId) {
   return {
@@ -36,6 +30,7 @@ export function createEmptyCardState(cardId) {
     state: CARD_STATES.NEW,
     difficulty: 5.0,
     stability: 0,
+    easyStreak: 0,
     elapsedDays: 0,
     scheduledDays: 0,
     reps: 0,
@@ -50,12 +45,7 @@ export function createEmptyCardState(cardId) {
     againCount: 0,
     totalResponseMs: 0,
     avgResponseMs: 0,
-    recognitionOnlyMastery: false,
   };
-}
-
-function clamp(val, min, max) {
-  return Math.min(max, Math.max(min, val));
 }
 
 export function computeRetrievability(cardState, nowMs = Date.now()) {
@@ -63,57 +53,18 @@ export function computeRetrievability(cardState, nowMs = Date.now()) {
     return cardState?.state === CARD_STATES.NEW ? 0 : 1;
   }
   const elapsedDays = Math.max(0, (nowMs - cardState.lastReviewedAt) / DAY_MS);
-  // FSRS forgetting curve: R(t, S) = (1 + t / (9 * S)) ^ -1
   return Math.pow(1 + elapsedDays / (9 * cardState.stability), -1);
 }
 
-function initDifficulty(rating, w) {
-  return clamp(w[4] - Math.exp(w[5] * (rating - 1)) + 1, 1, 10);
-}
-
-function initStability(rating, w) {
-  return Math.max(0.1, w[rating - 1]);
-}
-
-function nextDifficulty(d, rating, w) {
-  const nextD = d - w[6] * (rating - 3);
-  // Mean reversion toward w[4]
-  return clamp(w[7] * w[4] + (1 - w[7]) * nextD, 1, 10);
-}
-
-function nextRecallStability(d, s, r, rating, w) {
-  const hardPenalty = rating === RATINGS.HARD ? w[15] : 1;
-  const easyBonus = rating === RATINGS.EASY ? w[16] : 1;
-  const factor =
-    Math.exp(w[8]) *
-    (11 - d) *
-    Math.pow(s, -w[9]) *
-    (Math.exp((1 - r) * w[10]) - 1) *
-    hardPenalty *
-    easyBonus;
-  return Math.max(0.1, s * (1 + factor));
-}
-
-function nextForgetStability(d, s, r, w) {
-  const sNew =
-    w[11] *
-    Math.pow(d, -w[12]) *
-    (Math.pow(s + 1, w[13]) - 1) *
-    Math.exp((1 - r) * w[14]);
-  return Math.max(0.1, Math.min(s, sNew));
-}
-
-function stabilityToIntervalDays(stability, requestRetention, maxInterval) {
-  // Inverse of R(t, S) = (1 + t / (9 * S)) ^ -1  => t = 9 * S * (1/R - 1)
-  const raw = 9 * stability * (1 / requestRetention - 1);
-  return clamp(Math.round(raw), 1, maxInterval);
+export function getNextMudahMinutes(currentEasyStreak = 0) {
+  const idx = Math.min(currentEasyStreak, MUDAH_INTERVAL_MINUTES.length - 1);
+  return MUDAH_INTERVAL_MINUTES[Math.max(0, idx)];
 }
 
 /**
- * Computes the next FSRS card state for a given rating (1..4) at nowMs.
+ * Computes next card state for Sulit (RATINGS.AGAIN = 1) or Mudah (RATINGS.GOOD = 3).
  */
 export function scheduleCard(prevState, rating, nowMs = Date.now(), options = {}) {
-  const { w, requestRetention, maximumInterval } = DEFAULT_PARAMS;
   const mode = options.mode || "active_recall";
   const responseMs = typeof options.responseMs === "number" ? Math.max(0, options.responseMs) : 0;
 
@@ -122,81 +73,53 @@ export function scheduleCard(prevState, rating, nowMs = Date.now(), options = {}
     ? Math.max(0, (nowMs - prev.lastReviewedAt) / DAY_MS)
     : 0;
 
-  let nextState = prev.state;
-  let nextD = prev.difficulty;
-  let nextS = prev.stability;
-  let nextLapses = prev.lapses;
-  let scheduledDays = 0;
-  let dueAt = nowMs;
+  const prevStreak = prev.easyStreak || 0;
+  const isSulit = rating === RATINGS.AGAIN || rating === RATINGS.HARD;
 
-  if (prev.state === CARD_STATES.NEW || prev.reps === 0) {
-    nextD = initDifficulty(rating, w);
-    nextS = initStability(rating, w);
+  let nextEasyStreak;
+  let intervalMinutes;
+  let nextState;
+  let nextLapses = prev.lapses || 0;
+  let nextD = prev.difficulty ?? 5.0;
 
-    if (rating === RATINGS.AGAIN) {
-      nextState = CARD_STATES.LEARNING;
-      scheduledDays = 0;
-      dueAt = nowMs + 5 * MIN_MS;
-      nextLapses += 1;
-    } else if (rating === RATINGS.HARD) {
-      nextState = CARD_STATES.LEARNING;
-      scheduledDays = 0;
-      dueAt = nowMs + 15 * MIN_MS;
-    } else if (rating === RATINGS.GOOD) {
-      nextState = CARD_STATES.REVIEW;
-      scheduledDays = Math.max(1, stabilityToIntervalDays(nextS, requestRetention, maximumInterval));
-      dueAt = nowMs + scheduledDays * DAY_MS;
-    } else {
-      nextState = CARD_STATES.REVIEW;
-      scheduledDays = Math.max(3, stabilityToIntervalDays(nextS, requestRetention, maximumInterval));
-      dueAt = nowMs + scheduledDays * DAY_MS;
-    }
+  if (isSulit) {
+    nextEasyStreak = 0;
+    intervalMinutes = SULIT_INTERVAL_MINUTES;
+    nextState = prev.reps > 0 ? CARD_STATES.RELEARNING : CARD_STATES.LEARNING;
+    nextLapses += 1;
+    nextD = Math.min(10, Number((nextD + 0.6).toFixed(3)));
   } else {
-    const r = computeRetrievability(prev, nowMs);
-    nextD = nextDifficulty(prev.difficulty, rating, w);
-
-    if (rating === RATINGS.AGAIN) {
-      nextS = nextForgetStability(nextD, Math.max(0.2, prev.stability), r, w);
-      nextState = CARD_STATES.RELEARNING;
-      nextLapses += 1;
-      scheduledDays = 0;
-      dueAt = nowMs + 5 * MIN_MS;
-    } else {
-      nextS = nextRecallStability(nextD, Math.max(0.2, prev.stability), r, rating, w);
-      nextState = CARD_STATES.REVIEW;
-
-      let interval = stabilityToIntervalDays(nextS, requestRetention, maximumInterval);
-      if (rating === RATINGS.HARD) {
-        interval = Math.max(1, Math.min(interval, Math.max(1, Math.round((prev.scheduledDays || 1) * 1.2))));
-      } else if (rating === RATINGS.GOOD) {
-        interval = Math.max((prev.scheduledDays || 0) + 1, interval);
-      } else if (rating === RATINGS.EASY) {
-        interval = Math.max((prev.scheduledDays || 1) + 2, Math.round(interval * 1.3));
-      }
-      scheduledDays = clamp(interval, 1, maximumInterval);
-      dueAt = nowMs + scheduledDays * DAY_MS;
-    }
+    nextEasyStreak = prevStreak + 1;
+    intervalMinutes = getNextMudahMinutes(prevStreak);
+    nextState = CARD_STATES.REVIEW;
+    nextD = Math.max(1, Number((nextD - 0.35).toFixed(3)));
   }
 
-  const totalReviews = prev.totalReviews + 1;
-  const correctCount = prev.correctCount + (rating >= RATINGS.HARD ? 1 : 0);
-  const hardCount = prev.hardCount + (rating === RATINGS.HARD ? 1 : 0);
-  const againCount = prev.againCount + (rating === RATINGS.AGAIN ? 1 : 0);
-  const totalResponseMs = prev.totalResponseMs + responseMs;
+  const dueAt = nowMs + intervalMinutes * MIN_MS;
+  const scheduledDays = Number((intervalMinutes / (24 * 60)).toFixed(4));
+  const stabilityIdx = Math.min(nextEasyStreak, STAGE_STABILITY_DAYS.length - 1);
+  const nextS = STAGE_STABILITY_DAYS[stabilityIdx];
+
+  const totalReviews = (prev.totalReviews || 0) + 1;
+  const correctCount = (prev.correctCount || 0) + (isSulit ? 0 : 1);
+  const hardCount = (prev.hardCount || 0) + (isSulit ? 1 : 0);
+  const againCount = (prev.againCount || 0) + (isSulit ? 1 : 0);
+  const totalResponseMs = (prev.totalResponseMs || 0) + responseMs;
   const avgResponseMs = totalReviews > 0 ? Math.round(totalResponseMs / totalReviews) : 0;
 
   return {
     ...prev,
     state: nextState,
-    difficulty: Number(nextD.toFixed(3)),
-    stability: Number(nextS.toFixed(3)),
-    elapsedDays: Number(elapsedDays.toFixed(3)),
+    difficulty: nextD,
+    stability: nextS,
+    easyStreak: nextEasyStreak,
+    elapsedDays: Number(elapsedDays.toFixed(4)),
     scheduledDays,
-    reps: prev.reps + 1,
+    reps: (prev.reps || 0) + 1,
     lapses: nextLapses,
     lastReviewedAt: nowMs,
     dueAt,
-    lastRating: rating,
+    lastRating: isSulit ? RATINGS.AGAIN : RATINGS.GOOD,
     lastMode: mode,
     totalReviews,
     correctCount,
@@ -207,24 +130,27 @@ export function scheduleCard(prevState, rating, nowMs = Date.now(), options = {}
   };
 }
 
+export function formatMinutesLabel(minutes) {
+  if (minutes < 60) return `${minutes} menit`;
+  const hours = minutes / 60;
+  return `${hours} jam`;
+}
+
 export function formatIntervalLabel(dueAt, nowMs = Date.now()) {
   if (!dueAt) return "-";
   const diffMs = Math.max(0, dueAt - nowMs);
   const mins = Math.round(diffMs / MIN_MS);
-  if (mins < 60) return `${Math.max(1, mins)} mnt`;
+  if (mins < 60) return `${Math.max(1, mins)} menit`;
   const hours = Math.round(diffMs / (60 * MIN_MS));
   if (hours < 24) return `${hours} jam`;
   const days = Math.round(diffMs / DAY_MS);
-  if (days < 30) return `${days} hr`;
-  const months = Math.round(days / 30);
-  return `${months} bln`;
+  return `${days} hari`;
 }
 
-export function previewNextIntervals(cardState, nowMs = Date.now()) {
+export function previewNextIntervals(cardState) {
+  const streak = cardState?.easyStreak || 0;
   return {
-    [RATINGS.AGAIN]: formatIntervalLabel(scheduleCard(cardState, RATINGS.AGAIN, nowMs).dueAt, nowMs),
-    [RATINGS.HARD]: formatIntervalLabel(scheduleCard(cardState, RATINGS.HARD, nowMs).dueAt, nowMs),
-    [RATINGS.GOOD]: formatIntervalLabel(scheduleCard(cardState, RATINGS.GOOD, nowMs).dueAt, nowMs),
-    [RATINGS.EASY]: formatIntervalLabel(scheduleCard(cardState, RATINGS.EASY, nowMs).dueAt, nowMs),
+    sulit: formatMinutesLabel(SULIT_INTERVAL_MINUTES),
+    mudah: formatMinutesLabel(getNextMudahMinutes(streak)),
   };
 }

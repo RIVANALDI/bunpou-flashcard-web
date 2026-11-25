@@ -608,10 +608,10 @@ kbd {
 .status-badge.familiar { background: rgba(59, 91, 219, 0.16); color: var(--accent); }
 .status-badge.mastered { background: var(--success-soft); color: var(--success); }
 
-/* FSRS 4-button rating bar */
+/* 2-button rating bar (Sulit / Mudah) */
 .fsrs-controls {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 

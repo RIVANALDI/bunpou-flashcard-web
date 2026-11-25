@@ -213,7 +213,7 @@ export default function App() {
       elapsedDays: nextState.elapsedDays,
       prevMastery,
       nextMastery: MASTERY_LEVELS.UNSEEN, // computed below
-      isRetentionTest: nextState.elapsedDays >= 0.04,
+      isRetentionTest: nextState.elapsedDays >= 0.003,
     };
 
     const nextLogsForCard = [...prevLogs, newLog];
@@ -239,17 +239,40 @@ export default function App() {
     });
 
     const rest = queue.slice(1);
-    if (rating === RATINGS.AGAIN) {
-      // Re-insert soon in session so user practices forgotten card again
-      const insertAt = Math.min(3, rest.length);
-      rest.splice(insertAt, 0, currentCard.id);
-    }
-
     setQueue(rest);
     setIsFlipped(false);
     setTurnCounter((c) => c + 1);
     cardShownAtRef.current = Date.now();
   };
+
+  // Automatic time-based due check: cards whose dueAt <= now re-enter queue automatically
+  useEffect(() => {
+    const checkDueCards = () => {
+      const now = Date.now();
+      const scopeIds = new Set(
+        deckSource === "daily"
+          ? buildDailyReviewPlan(CARDS, cardStates, reviewLogs, dailyNewTarget, now).queueIds
+          : deckSource === "weak"
+          ? weakWordsList.map((w) => w.card.id)
+          : CARDS.filter((c) => deckSource === "all" || String(c.ch) === deckSource)
+              .filter((c) => {
+                const st = cardStates[c.id];
+                return st && st.reps > 0 && st.dueAt && st.dueAt <= now;
+              })
+              .map((c) => c.id)
+      );
+
+      setQueue((prevQueue) => {
+        const inQueue = new Set(prevQueue);
+        const newlyDue = [...scopeIds].filter((id) => !inQueue.has(id));
+        if (newlyDue.length === 0) return prevQueue;
+        return [...prevQueue, ...newlyDue];
+      });
+    };
+
+    const timer = setInterval(checkDueCards, 15000);
+    return () => clearInterval(timer);
+  }, [deckSource, cardStates, reviewLogs, dailyNewTarget, weakWordsList]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -268,11 +291,7 @@ export default function App() {
       } else if (e.key === "1" && isFlipped) {
         handleRate(RATINGS.AGAIN);
       } else if (e.key === "2" && isFlipped) {
-        handleRate(RATINGS.HARD);
-      } else if (e.key === "3" && isFlipped) {
         handleRate(RATINGS.GOOD);
-      } else if (e.key === "4" && isFlipped) {
-        handleRate(RATINGS.EASY);
       } else if (e.key.toLowerCase() === "p" && isFlipped && currentCard) {
         openPenjelasan(currentCard.id);
       }
@@ -558,49 +577,27 @@ export default function App() {
                   disabled={!isFlipped}
                   onClick={() => handleRate(RATINGS.AGAIN)}
                 >
-                  <span className="fsrs-title">Again (1)</span>
+                  <span className="fsrs-title">Sulit (1)</span>
                   <span className="fsrs-sub">
-                    {intervalPreviews ? intervalPreviews[RATINGS.AGAIN] : "-"}
-                  </span>
-                </button>
-                <button
-                  className="fsrs-btn fsrs-hard"
-                  type="button"
-                  disabled={!isFlipped}
-                  onClick={() => handleRate(RATINGS.HARD)}
-                >
-                  <span className="fsrs-title">Hard (2)</span>
-                  <span className="fsrs-sub">
-                    {intervalPreviews ? intervalPreviews[RATINGS.HARD] : "-"}
-                  </span>
-                </button>
-                <button
-                  className="fsrs-btn fsrs-good"
-                  type="button"
-                  disabled={!isFlipped}
-                  onClick={() => handleRate(RATINGS.GOOD)}
-                >
-                  <span className="fsrs-title">Good (3)</span>
-                  <span className="fsrs-sub">
-                    {intervalPreviews ? intervalPreviews[RATINGS.GOOD] : "-"}
+                    {intervalPreviews ? intervalPreviews.sulit : "5 menit"}
                   </span>
                 </button>
                 <button
                   className="fsrs-btn fsrs-easy"
                   type="button"
                   disabled={!isFlipped}
-                  onClick={() => handleRate(RATINGS.EASY)}
+                  onClick={() => handleRate(RATINGS.GOOD)}
                 >
-                  <span className="fsrs-title">Easy (4)</span>
+                  <span className="fsrs-title">Mudah (2)</span>
                   <span className="fsrs-sub">
-                    {intervalPreviews ? intervalPreviews[RATINGS.EASY] : "-"}
+                    {intervalPreviews ? intervalPreviews.mudah : "15 menit"}
                   </span>
                 </button>
               </div>
 
               {!isFlipped && (
                 <div className="gate-hint">
-                  🔒 Balik kartu terlebih dahulu sebelum memberi penilaian FSRS
+                  🔒 Balik kartu terlebih dahulu sebelum menilai (Sulit / Mudah)
                 </div>
               )}
             </>
@@ -636,8 +633,8 @@ export default function App() {
           )}
 
           <div className="kbd-hint">
-            Shortcut: <kbd>Space</kbd> Balik · <kbd>1</kbd> Again · <kbd>2</kbd> Hard ·{" "}
-            <kbd>3</kbd> Good · <kbd>4</kbd> Easy · <kbd>P</kbd> Penjelasan
+            Shortcut: <kbd>Space</kbd> Balik · <kbd>1</kbd> Sulit · <kbd>2</kbd> Mudah ·{" "}
+            <kbd>P</kbd> Penjelasan
           </div>
         </main>
       )}
