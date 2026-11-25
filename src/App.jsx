@@ -65,6 +65,7 @@ export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem(STORAGE_THEME) || "light");
   const [store, setStore] = useState(() => loadStore());
   const [view, setView] = useState("study"); // 'study' | 'dashboard'
+  const [menuOpen, setMenuOpen] = useState(false);
   const [deckSource, setDeckSource] = useState("daily");
   const [quizMode, setQuizMode] = useState(QUIZ_MODES.ACTIVE_RECALL); // or 'mixed'
   const [isFlipped, setIsFlipped] = useState(false);
@@ -252,6 +253,10 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e) => {
+      if (menuOpen) {
+        if (e.key === "Escape") setMenuOpen(false);
+        return;
+      }
       if (detailCard) {
         if (e.key === "Escape") closePenjelasan();
         return;
@@ -298,64 +303,184 @@ export default function App() {
     setIsFlipped(false);
   };
 
+  const activeSourceLabel =
+    deckSource === "daily"
+      ? `Daily Review (${dailyPlan.remainingCount})`
+      : deckSource === "weak"
+      ? `Weak Words (${weakWordsList.length})`
+      : DECK_SOURCES.find((s) => s.key === deckSource)?.label || "Semua";
+
   return (
     <div className="app">
+      {/* Minimalist Top Bar */}
       <header className="topbar">
-        <div className="brand">
-          <h1>文法フラッシュカード</h1>
-          <p>HONSATSU 第22課・第23課・第24課 · FSRS</p>
+        <div className="topbar-left">
+          <button
+            className="icon-btn menu-trigger"
+            type="button"
+            aria-label="Buka menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(true)}
+          >
+            ☰ Menu
+          </button>
+          <div className="brand">
+            <h1>文法フラッシュカード</h1>
+            <p>
+              {view === "dashboard" ? "Dashboard Progres" : `${activeSourceLabel} · ${quizMode === "mixed" ? "Mixed" : QUIZ_MODE_LABELS[quizMode]}`}
+            </p>
+          </div>
         </div>
 
-        <div className="topbar-actions">
-          <div className="nav-tabs">
+        <div className="topbar-right">
+          {view === "dashboard" && !detailCard && (
             <button
+              className="pill active"
               type="button"
-              className={`pill ${view === "study" && !detailCard ? "active" : ""}`}
-              onClick={() => {
-                if (detailCard) closePenjelasan();
-                setView("study");
-              }}
+              onClick={() => setView("study")}
             >
               📚 Belajar
             </button>
-            <button
-              type="button"
-              className={`pill ${view === "dashboard" && !detailCard ? "active" : ""}`}
-              onClick={() => {
-                if (detailCard) closePenjelasan();
-                setView("dashboard");
-              }}
-            >
-              📊 Dashboard
-            </button>
-          </div>
-
-          <select
-            aria-label="Profil pengguna"
-            className="select-input"
-            value={store.activeUserId}
-            onChange={(e) => handleSwitchUser(e.target.value)}
-          >
-            {Object.values(store.users).map((u) => (
-              <option key={u.id} value={u.id}>
-                👤 {u.name}
-              </option>
-            ))}
-          </select>
-
-          <button className="icon-btn" type="button" onClick={handleAddUser} title="Tambah profil">
-            +Profil
-          </button>
-
+          )}
           <button
             className="icon-btn"
             type="button"
+            aria-label="Ganti tema"
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           >
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
         </div>
       </header>
+
+      {/* Curtain Menu Overlay */}
+      <div
+        className={`curtain-backdrop ${menuOpen ? "open" : ""}`}
+        onClick={() => setMenuOpen(false)}
+      />
+      <aside
+        className={`curtain-menu ${menuOpen ? "open" : ""}`}
+        aria-hidden={!menuOpen}
+      >
+        <div className="curtain-inner">
+          <div className="curtain-head">
+            <div>
+              <strong>Menu Belajar</strong>
+              <span className="curtain-sub">HONSATSU 第22課・第23課・第24課 · FSRS</span>
+            </div>
+            <button
+              className="icon-btn"
+              type="button"
+              onClick={() => setMenuOpen(false)}
+            >
+              ✕ Tutup
+            </button>
+          </div>
+
+          <div className="curtain-section">
+            <div className="curtain-label">Tampilan &amp; Profil</div>
+            <div className="curtain-row">
+              <button
+                type="button"
+                className={`pill ${view === "study" && !detailCard ? "active" : ""}`}
+                onClick={() => {
+                  if (detailCard) closePenjelasan();
+                  setView("study");
+                  setMenuOpen(false);
+                }}
+              >
+                📚 Belajar
+              </button>
+              <button
+                type="button"
+                className={`pill ${view === "dashboard" && !detailCard ? "active" : ""}`}
+                onClick={() => {
+                  if (detailCard) closePenjelasan();
+                  setView("dashboard");
+                  setMenuOpen(false);
+                }}
+              >
+                📊 Dashboard Progres
+              </button>
+              <select
+                aria-label="Profil pengguna"
+                className="select-input"
+                value={store.activeUserId}
+                onChange={(e) => handleSwitchUser(e.target.value)}
+              >
+                {Object.values(store.users).map((u) => (
+                  <option key={u.id} value={u.id}>
+                    👤 {u.name}
+                  </option>
+                ))}
+              </select>
+              <button className="icon-btn" type="button" onClick={handleAddUser}>
+                +Profil
+              </button>
+            </div>
+          </div>
+
+          <div className="curtain-section">
+            <div className="curtain-label">Sumber Kartu</div>
+            <div className="curtain-row">
+              {DECK_SOURCES.map((src) => (
+                <button
+                  key={src.key}
+                  type="button"
+                  className={`pill ${deckSource === src.key ? "active" : ""}`}
+                  onClick={() => {
+                    if (detailCard) closePenjelasan();
+                    switchDeckSource(src.key);
+                    setView("study");
+                    setMenuOpen(false);
+                  }}
+                >
+                  {src.key === "daily"
+                    ? `${src.label} (${dailyPlan.remainingCount})`
+                    : src.key === "weak"
+                    ? `${src.label} (${weakWordsList.length})`
+                    : src.label}
+                </button>
+              ))}
+              {deckSource !== "daily" && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => {
+                    switchDeckSource(deckSource, true);
+                    setView("study");
+                    setMenuOpen(false);
+                  }}
+                >
+                  🔀 Acak Urutan
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="curtain-section">
+            <div className="curtain-label">Mode Pengujian</div>
+            <div className="curtain-row">
+              <select
+                aria-label="Mode Pengujian"
+                className="select-input"
+                value={quizMode}
+                onChange={(e) => {
+                  setQuizMode(e.target.value);
+                  setIsFlipped(false);
+                }}
+              >
+                {Object.entries(QUIZ_MODE_LABELS).map(([k, lbl]) => (
+                  <option key={k} value={k}>
+                    {lbl}
+                  </option>
+                ))}
+                <option value="mixed">🎲 Mixed Review (Campur Mode)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </aside>
 
       {detailCard ? (
         <PenjelasanPage card={detailCard} onBack={closePenjelasan} />
@@ -385,54 +510,6 @@ export default function App() {
         />
       ) : (
         <main>
-          <div className="controls-bar">
-            <div className="pills">
-              {DECK_SOURCES.map((src) => (
-                <button
-                  key={src.key}
-                  type="button"
-                  className={`pill ${deckSource === src.key ? "active" : ""}`}
-                  onClick={() => switchDeckSource(src.key)}
-                >
-                  {src.key === "daily"
-                    ? `${src.label} (${dailyPlan.remainingCount})`
-                    : src.key === "weak"
-                    ? `${src.label} (${weakWordsList.length})`
-                    : src.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="actions-row">
-              <select
-                aria-label="Mode Pengujian"
-                className="select-input"
-                value={quizMode}
-                onChange={(e) => {
-                  setQuizMode(e.target.value);
-                  setIsFlipped(false);
-                }}
-              >
-                {Object.entries(QUIZ_MODE_LABELS).map(([k, lbl]) => (
-                  <option key={k} value={k}>
-                    {lbl}
-                  </option>
-                ))}
-                <option value="mixed">🎲 Mixed Review (Campur Mode)</option>
-              </select>
-
-              {deckSource !== "daily" && (
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => switchDeckSource(deckSource, true)}
-                >
-                  🔀 Acak
-                </button>
-              )}
-            </div>
-          </div>
-
           <section className="progress-wrap">
             <div className="progress-stats">
               <div className="stat-group">
