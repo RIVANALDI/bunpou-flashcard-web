@@ -66,7 +66,7 @@ export default function App() {
   const [store, setStore] = useState(() => loadStore());
   const [view, setView] = useState("study"); // 'study' | 'dashboard'
   const [menuOpen, setMenuOpen] = useState(false);
-  const [deckSource, setDeckSource] = useState("daily");
+  const [deckSource, setDeckSource] = useState("all");
   const [quizMode, setQuizMode] = useState(QUIZ_MODES.ACTIVE_RECALL); // or 'mixed'
   const [isFlipped, setIsFlipped] = useState(false);
   const [turnCounter, setTurnCounter] = useState(1);
@@ -129,7 +129,7 @@ export default function App() {
 
   const [queue, setQueue] = useState(() =>
     buildQueueForSource(
-      "daily",
+      "all",
       CARDS,
       activeUser.cardStates || {},
       buildDailyReviewPlan(CARDS, activeUser.cardStates || {}, activeUser.reviewLogs || [], activeUser.dailyNewTarget || 5),
@@ -305,20 +305,16 @@ export default function App() {
     if (!name || !name.trim()) return;
     const nextStore = createUserProfile(store, name);
     setStore(nextStore);
-    setDeckSource("daily");
-    const newUser = nextStore.users[nextStore.activeUserId];
-    const plan = buildDailyReviewPlan(CARDS, newUser.cardStates, newUser.reviewLogs, newUser.dailyNewTarget);
-    setQueue(plan.queueIds);
+    setDeckSource("all");
+    setQueue(CARDS.map((c) => c.id));
     setIsFlipped(false);
   };
 
   const handleSwitchUser = (userId) => {
     const nextStore = { ...store, activeUserId: userId };
     setStore(nextStore);
-    const u = nextStore.users[userId];
-    const plan = buildDailyReviewPlan(CARDS, u.cardStates, u.reviewLogs, u.dailyNewTarget);
-    setDeckSource("daily");
-    setQueue(plan.queueIds);
+    setDeckSource("all");
+    setQueue(CARDS.map((c) => c.id));
     setIsFlipped(false);
   };
 
